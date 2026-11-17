@@ -22,6 +22,10 @@
         </button>
 
         <div v-if="!displayCart">
+            <label for="search">Search:</label>
+            <input id="search" type="search" v-model="searchTerm"
+                placeholder="Search lessons">
+
             <label for="sortBy">Sort by:</label>
             <select id="sortBy" v-model="sortBy">
                 <option value="subject">Subject</option>
@@ -39,9 +43,13 @@
 
         <p v-if="loading && !displayCart">Loading lessons...</p>
         <p v-else-if="errorMessage && !displayCart">{{ errorMessage }}</p>
+        <p v-else-if="!displayCart && sortedLessons.length == 0">No lessons found.</p>
 
-        <div v-if="!displayCart && !loading && !errorMessage" class="lesson-list">
+        <div v-if="!displayCart && !loading && !errorMessage && sortedLessons.length > 0" class="lesson-list">
             <div v-for="lesson in sortedLessons" v-bind:key="lesson.id" class="lesson">
+                <img class="lesson-image"
+                    v-bind:src="lesson.image ? `${apiUrl}/images/${lesson.image}` : `${apiUrl}/images/default-lesson.svg`"
+                    v-bind:alt="lesson.subject">
                 <h2>{{ lesson.subject }}</h2>
                 <p>Location: {{ lesson.location }}</p>
                 <p>Price: £{{ lesson.price }}</p>
@@ -53,7 +61,7 @@
             </div>
         </div>
 
-        <div v-else class="shopping-cart">
+        <div v-if="displayCart" class="shopping-cart">
             <h2>Shopping Cart</h2>
 
             <p v-if="cartLessons.length == 0">
@@ -64,6 +72,7 @@
                 <h3>{{ lesson.subject }}</h3>
                 <p>Location: {{ lesson.location }}</p>
                 <p>Price: £{{ lesson.price }}</p>
+                <p>Quantity: {{ lesson.quantity }}</p>
 
                 <button v-on:click="removeFromCart(lesson.id)">
                     Remove from Cart
@@ -75,12 +84,20 @@
 
                 <p>
                     <label for="name">Name:</label>
-                    <input id="name" type="text" v-model="name" placeholder="Enter your name">
+                    <input id="name" type="text" v-model="name" v-on:blur="nameTouched = true"
+                        placeholder="Enter your name">
+                    <span v-if="nameTouched && !nameValid" class="validation-message">
+                        Name must contain letters only.
+                    </span>
                 </p>
 
                 <p>
                     <label for="phone">Phone:</label>
-                    <input id="phone" type="tel" v-model="phone" placeholder="Enter your phone number">
+                    <input id="phone" type="tel" v-model="phone" v-on:blur="phoneTouched = true"
+                        placeholder="Enter your phone number">
+                    <span v-if="phoneTouched && !phoneValid" class="validation-message">
+                        Enter an eligible phone number with exactly 11 digits.
+                    </span>
                 </p>
 
                 <button v-on:click="checkout" v-bind:disabled="!validDetails">
@@ -92,9 +109,6 @@
             </div>
         </div>
     </div>
-
-
-
     <script type="module">
         const { createApp } = Vue
         const API_URL = "https://backend-aicw-m01010537.onrender.com";
@@ -103,14 +117,18 @@
             data() {
                 return {
                     sitename: "University Lesson Store",
+                    apiUrl: API_URL,
                     cart: [],
                     displayCart: false,
                     name: "",
                     phone: "",
+                    nameTouched: false,
+                    phoneTouched: false,
                     orderSubmitted: false,
                     lessons: [],
                     loading: true,
                     errorMessage: "",
+                    searchTerm: "",
                     sortBy: "subject",
                     sortOrder: "ascending"
                 }
@@ -124,10 +142,26 @@
                 this.fetchLessons()
             },
             computed: {
+                searchedLessons() {
+                    const query = this.searchTerm.trim().toLowerCase()
+
+                    if (query == "") {
+                        return this.lessons
+                    }
+
+                    return this.lessons.filter(function (lesson) {
+                        return String(lesson.subject).toLowerCase().includes(query)
+                    })
+                },
+
                 sortedLessons() {
-                    return [...this.lessons].sort((lessonA, lessonB) => {
-                        let first = lessonA[this.sortBy]
-                        let second = lessonB[this.sortBy]
+                    return [...this.searchedLessons].sort((lessonA, lessonB) => {
+                        let first = this.sortBy == "availability"
+                            ? this.remainingSpaces[lessonA.id]
+                            : lessonA[this.sortBy]
+                        let second = this.sortBy == "availability"
+                            ? this.remainingSpaces[lessonB.id]
+                            : lessonB[this.sortBy]
 
                         if (this.sortBy == "subject" || this.sortBy == "location") {
                             first = first.toLowerCase()
@@ -151,17 +185,35 @@
                 },
 
                 cartLessons() {
-                    return this.cart.map(function (lessonId, index) {
+                    const uniqueLessonIds = this.cart.filter(function (lessonId, index, cart) {
+                        return cart.indexOf(lessonId) == index
+                    })
+
+                    return uniqueLessonIds.map(function (lessonId) {
                         const lesson = this.lessons.find(function (item) {
                             return item.id == lessonId
                         })
+                        const quantity = this.cart.filter(function (cartLessonId) {
+                            return cartLessonId == lessonId
+                        }).length
 
                         return {
                             ...lesson,
                             spacesLeft: this.remainingSpaces[lessonId],
-                            cartKey: `${lessonId}-${index}`
+                            quantity: quantity,
+                            cartKey: lessonId
                         }
                     }, this)
+                },
+
+                cartSpaces() {
+                    const spaces = {}
+
+                    this.cart.forEach(function (lessonId) {
+                        spaces[lessonId] = (spaces[lessonId] || 0) + 1
+                    })
+
+                    return spaces
                 },
 
                 remainingSpaces() {
@@ -188,9 +240,16 @@
                     return lessonAvailability
                 },
 
+                nameValid() {
+                    return /^[A-Za-z]+$/.test(this.name)
+                },
+
+                phoneValid() {
+                    return /^\d{11}$/.test(this.phone)
+                },
+
                 validDetails() {
-                    return /^[A-Za-z]+$/.test(this.name) &&
-                        /^\d{11}$/.test(this.phone)
+                    return this.nameValid && this.phoneValid
                 }
             },
             methods: {
@@ -219,6 +278,7 @@
                         this.loading = false
                     }
                 },
+
                 toggleCart() {
                     this.displayCart = !this.displayCart
                 },
@@ -237,11 +297,17 @@
 
                     if (cartIndex != -1 && lesson) {
                         this.cart.splice(cartIndex, 1)
+
+                        if (this.cart.length == 0) {
+                            this.displayCart = false
+                        }
                     }
                 },
 
                 async checkout() {
                     this.errorMessage = ""
+                    const orderedLessonIds = this.cart.map(Number)
+                    const orderedSpaces = { ...this.cartSpaces }
 
                     try {
                         const response = await fetch(`${API_URL}/orders`, {
@@ -252,7 +318,8 @@
                             body: JSON.stringify({
                                 name: this.name,
                                 phone: this.phone,
-                                lessonIds: this.cart.map(Number)
+                                lessonIds: orderedLessonIds,
+                                spaces: orderedSpaces
                             })
                         })
 
@@ -265,6 +332,7 @@
                         console.log("Order saved:", savedOrder)
 
                         await this.fetchLessons()
+
                         this.orderSubmitted = true
                         this.cart = []
                         this.name = ""
